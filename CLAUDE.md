@@ -7,9 +7,8 @@ A book of short, fun maths conversations between a parent and child, the kind yo
 When the user gives a topic (or a rough draft), add it as a new file in `chats/`:
 
 - First pull the latest from GitHub. The website saves edits as commits straight to the default branch, so the repo may have changed since your checkout.
-
 - Name it `NN-slug.md`, numbered after the highest existing chat: `02-hilberts-hotel.md`. The number sets the order in the book.
-- Run `./scripts/build.sh` to check the epub and site still build.
+- Run `./scripts/build.sh` to check the epub still builds.
 - Commit and push.
 
 Before writing, read the existing chats in `chats/`. The user edits chats from the website, so the current files are the best guide to the voice they want. If a chat has been edited since you wrote it, learn from what they changed.

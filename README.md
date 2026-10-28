@@ -29,7 +29,7 @@ Each save is a commit to the default branch. Everyone sees the change once GitHu
 
 - From the website: **Download the epub** on the home page.
 - From GitHub: the **book** release always has the latest `mathchats.epub`.
-- Locally: `./scripts/build.sh` (needs [pandoc](https://pandoc.org/installing.html) and Python 3) writes `dist/mathchats.epub`.
+- Locally: `./scripts/build.sh` (needs [pandoc](https://pandoc.org/installing.html)) writes `dist/mathchats.epub`.
 
 Book title, subtitle and author are set in [`book/metadata.yaml`](book/metadata.yaml).
 
