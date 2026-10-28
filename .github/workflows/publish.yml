@@ -1,18 +1,18 @@
-name: Build book and website
+name: Build book
 
-# Builds the epub and the website on every push. Pushes to the default branch
-# also publish the website (with the epub on it) to GitHub Pages.
+# Builds the epub on every push. On the default branch it also replaces the
+# epub on the "book" release, which is what the website's download link points to.
+# (The website itself is served straight from the default branch by GitHub Pages.)
 on:
   push:
+    branches: ["**"]
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: book-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -24,10 +24,8 @@ jobs:
       - name: Install pandoc
         run: sudo apt-get update && sudo apt-get install -y pandoc
 
-      - name: Build epub and website
+      - name: Build epub
         run: ./scripts/build.sh
-        env:
-          SITE_BRANCH: ${{ github.ref_name }}
 
       - name: Upload epub
         uses: actions/upload-artifact@v4
@@ -35,19 +33,12 @@ jobs:
           name: mathchats-epub
           path: dist/mathchats.epub
 
-      - name: Upload website
+      - name: Publish epub to the "book" release
         if: github.ref_name == github.event.repository.default_branch
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist/site
-
-  deploy:
-    if: github.ref_name == github.event.repository.default_branch
-    needs: build
-    runs-on: ubuntu-24.04
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view book >/dev/null 2>&1 || \
+            gh release create book --target "$GITHUB_SHA" --title "The book (latest)" \
+              --notes "The latest epub, rebuilt automatically whenever a chat changes."
+          gh release upload book dist/mathchats.epub --clobber

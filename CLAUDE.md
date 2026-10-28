@@ -6,6 +6,8 @@ A book of short, fun maths conversations between a parent and child, the kind yo
 
 When the user gives a topic (or a rough draft), add it as a new file in `chats/`:
 
+- First pull the latest from GitHub. The website saves edits as commits straight to the default branch, so the repo may have changed since your checkout.
+
 - Name it `NN-slug.md`, numbered after the highest existing chat: `02-hilberts-hotel.md`. The number sets the order in the book.
 - Run `./scripts/build.sh` to check the epub and site still build.
 - Commit and push.
@@ -49,6 +51,6 @@ Short background for the parent.
 - `chats/` the chats, one markdown file each
 - `book/metadata.yaml` book title, subtitle, author, language
 - `book/epub.css`, `book/chat-numbers.lua` epub styling and "Chat N:" numbering
-- `site/` the website (plain HTML/JS, no build step besides copying)
-- `scripts/build.sh` builds `dist/mathchats.epub` and `dist/site/`
-- `.github/workflows/publish.yml` builds on every push; deploys the site to GitHub Pages from the default branch
+- `index.html`, `site/` the website. GitHub Pages serves it straight from the default branch, with no build step. It lists `chats/` through the GitHub API and saves edits back through the API.
+- `scripts/build.sh` builds `dist/mathchats.epub`
+- `.github/workflows/publish.yml` builds the epub on every push. On the default branch it replaces `mathchats.epub` on the `book` release, which the website links to.

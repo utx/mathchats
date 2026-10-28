@@ -5,7 +5,7 @@ const app = document.getElementById("app");
 const TOKEN_KEY = "mathchats.token";
 const DRAFT_PREFIX = "mathchats.draft:";
 
-let manifest = null;
+let book = null;
 
 // ---------- small helpers ----------
 
@@ -70,48 +70,58 @@ function base64ToUtf8(b64) {
 
 // ---------- GitHub ----------
 
+// The repo is worked out from the Pages address (owner.github.io/repo); anywhere else it's this one.
+const REPO = location.hostname.endsWith(".github.io")
+  ? `${location.hostname.split(".")[0]}/${location.pathname.split("/")[1]}`
+  : "utx/mathchats";
+
+// Reads and saves use the repo's default branch, which is the branch GitHub Pages publishes.
 const gh = {
   url(path) {
     const encoded = path.split("/").map(encodeURIComponent).join("/");
-    return `https://api.github.com/repos/${manifest.repo}/contents/${encoded}`;
+    return `https://api.github.com/repos/${REPO}/contents/${encoded}`;
   },
   headers() {
-    return {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token()}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-    };
+    const h = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+    if (token()) h.Authorization = `Bearer ${token()}`;
+    return h;
   },
-  async get(path) {
-    const res = await fetch(`${this.url(path)}?ref=${encodeURIComponent(manifest.branch)}`, {
-      headers: this.headers(),
-      cache: "no-store",
-    });
+  async request(path, options = {}) {
+    const res = await fetch(this.url(path), { headers: this.headers(), cache: "no-store", ...options });
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(await explain(res));
-    const json = await res.json();
-    return { text: base64ToUtf8(json.content), sha: json.sha };
+    return res.json();
+  },
+  list(dir) {
+    return this.request(dir);
+  },
+  async get(path) {
+    const json = await this.request(path);
+    return json && { text: base64ToUtf8(json.content), sha: json.sha };
   },
   async put(path, text, sha, message) {
-    const body = { message, content: utf8ToBase64(text), branch: manifest.branch };
+    const body = { message, content: utf8ToBase64(text) };
     if (sha) body.sha = sha;
-    const res = await fetch(this.url(path), { method: "PUT", headers: this.headers(), body: JSON.stringify(body) });
-    if (!res.ok) throw new Error(await explain(res));
-    return (await res.json()).content.sha;
+    const json = await this.request(path, { method: "PUT", body: JSON.stringify(body) });
+    return json.content.sha;
   },
   editUrl(path) {
-    return `https://github.com/${manifest.repo}/edit/${manifest.branch}/${path}`;
+    return `https://github.com/${REPO}/edit/${book.branch}/${path}`;
   },
   newFileUrl(path, text) {
     const [dir, name] = [path.slice(0, path.lastIndexOf("/")), path.slice(path.lastIndexOf("/") + 1)];
-    return `https://github.com/${manifest.repo}/new/${manifest.branch}/${dir}?filename=${encodeURIComponent(name)}&value=${encodeURIComponent(text)}`;
+    return `https://github.com/${REPO}/new/${book.branch}/${dir}?filename=${encodeURIComponent(name)}&value=${encodeURIComponent(text)}`;
   },
 };
+
+const EPUB_URL = `https://github.com/${REPO}/releases/download/book/mathchats.epub`;
 
 async function explain(res) {
   let detail = "";
   try { detail = (await res.json()).message || ""; } catch (e) { /* not JSON */ }
   if (res.status === 401) return "GitHub didn't accept the token. Check it in Settings.";
+  if (res.status === 403 && /rate limit/i.test(detail))
+    return "GitHub's limit for visitors without a token has been reached for the hour. Add a token in Settings, or try again later.";
   if (res.status === 403) return `GitHub refused (403): ${detail || "the token may not have Contents write access to this repo."}`;
   if (res.status === 409) return "This chat changed on GitHub since you opened it. Copy your text somewhere safe, reload, and reapply your changes.";
   return `GitHub error ${res.status}${detail ? ": " + detail : ""}`;
@@ -119,26 +129,46 @@ async function explain(res) {
 
 // ---------- data ----------
 
-async function loadManifest() {
-  const res = await fetch("chats.json", { cache: "no-cache" });
-  if (!res.ok) throw new Error("Couldn't load chats.json. Has the site been built with scripts/build.sh?");
-  manifest = await res.json();
-  if (manifest.title) {
-    document.getElementById("brand").textContent = manifest.title;
-    document.title = manifest.title;
-  }
+// The book: title and subtitle from book/metadata.yaml, chats from whatever is in chats/ on GitHub right now.
+async function loadBook() {
+  const meta = await fetch("book/metadata.yaml", { cache: "no-cache" }).then((r) => (r.ok ? r.text() : ""));
+  const field = (name) => (meta.match(new RegExp(`^${name}:\\s*(.+)$`, "m")) || [, ""])[1].trim().replace(/^["']|["']$/g, "");
+
+  const files = ((await gh.list("chats")) || [])
+    .filter((f) => f.type === "file" && f.name.endsWith(".md"))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const branch = files.length
+    ? files[0].html_url.slice(files[0].html_url.indexOf("/blob/") + 6, files[0].html_url.lastIndexOf(`/${files[0].path}`))
+    : "main";
+
+  const chats = await Promise.all(
+    files.map(async (f) => {
+      const slug = f.name.replace(/\.md$/, "");
+      const chat = await loadChat(slug);
+      const text = chat ? chat.text : "";
+      return {
+        slug,
+        title: (text.match(/^# (.+)$/m) || [, slug])[1].trim(),
+        teaser: (text.match(/^\*([^*\n]+)\*\s*$/m) || [, ""])[1].trim(),
+      };
+    })
+  );
+
+  book = { title: field("title") || "Walk and Talk Maths", subtitle: field("subtitle"), branch, chats };
+  document.getElementById("brand").textContent = book.title;
 }
 
-const chatIndex = (slug) => manifest.chats.findIndex((c) => c.slug === slug);
+const chatIndex = (slug) => book.chats.findIndex((c) => c.slug === slug);
 const pathFor = (slug) => `chats/${slug}.md`;
 
-// Latest text for a chat: from GitHub if we have a token (so it includes recent edits), else the published copy.
+// Latest text for a chat: from GitHub if we have a token (so it includes edits made moments ago),
+// else the copy GitHub Pages is serving, which catches up a minute or so after each save.
 async function loadChat(slug) {
   if (token()) {
     const remote = await gh.get(pathFor(slug));
     if (remote) return remote;
   }
-  const res = await fetch(`chats/${slug}.md`, { cache: "no-cache" });
+  const res = await fetch(pathFor(slug), { cache: "no-cache" });
   if (!res.ok) return null;
   return { text: await res.text(), sha: null };
 }
@@ -146,7 +176,7 @@ async function loadChat(slug) {
 // ---------- views ----------
 
 function viewHome() {
-  const items = manifest.chats
+  const items = book.chats
     .map(
       (c, i) => `
       <li><a href="#/chat/${esc(c.slug)}">
@@ -158,10 +188,10 @@ function viewHome() {
     .join("");
   app.innerHTML = `
     <section class="hero">
-      <h1>${esc(manifest.title || "Walk and Talk Maths")}</h1>
-      <p>${esc(manifest.subtitle || "")}</p>
+      <h1>${esc(book.title || "Walk and Talk Maths")}</h1>
+      <p>${esc(book.subtitle || "")}</p>
       <div class="actions">
-        <a class="btn primary" href="mathchats.epub" download>Download the epub</a>
+        <a class="btn primary" href="${EPUB_URL}">Download the epub</a>
         <a class="btn" href="#/new">Start a new chat</a>
       </div>
     </section>
@@ -172,8 +202,8 @@ async function viewChat(slug) {
   const i = chatIndex(slug);
   const chat = await loadChat(slug);
   if (!chat) return viewMissing();
-  const prev = manifest.chats[i - 1];
-  const next = manifest.chats[i + 1];
+  const prev = book.chats[i - 1];
+  const next = book.chats[i + 1];
   app.innerHTML = `
     <div class="chat-tools"><a class="btn" href="#/edit/${esc(slug)}">Edit</a></div>
     ${i >= 0 ? `<div class="eyebrow">Chat ${i + 1}</div>` : ""}
@@ -183,7 +213,7 @@ async function viewChat(slug) {
       ${next ? `<a class="next" href="#/chat/${esc(next.slug)}"><span class="eyebrow">Next</span><br>${esc(next.title)}</a>` : ""}
     </nav>` : ""}`;
   document.getElementById("chat").replaceWith(renderChat(chat.text));
-  if (i >= 0) document.title = `${manifest.chats[i].title} · ${manifest.title}`;
+  if (i >= 0) document.title = `${book.chats[i].title} · ${book.title}`;
 }
 
 async function viewEdit(slug) {
@@ -284,6 +314,7 @@ async function viewEdit(slug) {
       original = textarea.value;
       store(draftKey, null);
       refresh();
+      await loadBook().catch(() => {}); // pick up a new chat or changed title for the list
       setStatus(`Saved to GitHub. The website and epub will rebuild in a minute or two.`, "ok");
     } catch (e) {
       setStatus(esc(e.message), "err");
@@ -297,7 +328,7 @@ async function viewEdit(slug) {
 
 function viewNew() {
   const nextNumber =
-    manifest.chats.reduce((max, c) => Math.max(max, parseInt(c.slug, 10) || 0), 0) + 1;
+    book.chats.reduce((max, c) => Math.max(max, parseInt(c.slug, 10) || 0), 0) + 1;
   app.innerHTML = `
     <h1 class="page-title">Start a new chat</h1>
     <form class="form" id="new-form">
@@ -333,7 +364,7 @@ function viewSettings() {
     <form class="form" id="settings-form">
       <label>GitHub token
         <input name="token" type="password" autocomplete="off" value="${esc(token())}" placeholder="github_pat_...">
-        <span class="hint">Kept only in this browser. Saves go to <b>${esc(manifest.repo)}</b> on branch <b>${esc(manifest.branch)}</b>.</span>
+        <span class="hint">Kept only in this browser. Saves go to <b>${esc(REPO)}</b> on branch <b>${esc(book.branch)}</b>.</span>
       </label>
       <div class="actions" style="margin:0">
         <button class="btn primary">Save token</button>
@@ -345,7 +376,7 @@ function viewSettings() {
       <b>Making a token</b>
       <ol>
         <li>On GitHub, go to <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Settings &rarr; Developer settings &rarr; Fine-grained tokens &rarr; Generate new token</a>.</li>
-        <li>Under <i>Repository access</i>, choose <i>Only select repositories</i> and pick <b>${esc(manifest.repo)}</b>.</li>
+        <li>Under <i>Repository access</i>, choose <i>Only select repositories</i> and pick <b>${esc(REPO)}</b>.</li>
         <li>Under <i>Permissions &rarr; Repository permissions</i>, set <b>Contents</b> to <i>Read and write</i>.</li>
         <li>Generate it, copy it, and paste it above.</li>
       </ol>
@@ -381,7 +412,7 @@ function viewMissing() {
 async function route() {
   window.onbeforeunload = null;
   app.classList.remove("wide");
-  document.title = manifest?.title || "Walk and Talk Maths";
+  document.title = book?.title || "Walk and Talk Maths";
   const [, page, slug] = (location.hash.replace(/^#\/?/, "/") || "/").split("/");
   try {
     if (page === "chat" && slug) await viewChat(decodeURIComponent(slug));
@@ -398,6 +429,6 @@ async function route() {
 // Leaving the editor with unsaved changes is fine: they're kept as a draft in this browser.
 window.addEventListener("hashchange", route);
 
-loadManifest()
+loadBook()
   .then(route)
   .catch((e) => (app.innerHTML = `<p class="status err">${esc(e.message)}</p>`));
