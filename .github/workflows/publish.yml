@@ -1,0 +1,53 @@
+name: Build book and website
+
+# Builds the epub and the website on every push. Pushes to the default branch
+# also publish the website (with the epub on it) to GitHub Pages.
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pandoc
+        run: sudo apt-get update && sudo apt-get install -y pandoc
+
+      - name: Build epub and website
+        run: ./scripts/build.sh
+        env:
+          SITE_BRANCH: ${{ github.ref_name }}
+
+      - name: Upload epub
+        uses: actions/upload-artifact@v4
+        with:
+          name: mathchats-epub
+          path: dist/mathchats.epub
+
+      - name: Upload website
+        if: github.ref_name == github.event.repository.default_branch
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/site
+
+  deploy:
+    if: github.ref_name == github.event.repository.default_branch
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
